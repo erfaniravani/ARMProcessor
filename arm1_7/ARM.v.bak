@@ -1,0 +1,96 @@
+////////////////////////////////////////////////////////////////////////////////
+//                              ARM Architecture:	                    		      //	
+// 		                        Instruction_Fetch Stage		                        //
+// Created by: Amirmahdi Joudi		                                              //
+// Revision by: Amirmahdi Joudi						                                         //
+// Date:05-07-2021						                                                      //
+////////////////////////////////////////////////////////////////////////////////
+
+module ARM(input clk, rst, switch);
+  
+  wire freeze, flush, Branch_taken, hazard;
+  wire[31:0] BranchAdder, PC, Instruction, PC_to_ID , Instruction_to_ID, PC_to_EXE;
+  wire[31:0] Result_WB, VAL_Rn, VAL_Rm;
+  wire[31:0] VAL_Rn_IDO, VAL_Rm_IDO;
+  wire[31:0] ALU_res, VAL_Rm_EXEO;
+  wire[31:0] ALU_res_EXEO;
+  wire[31:0] ALU_res_MEMO, val_rm_o;
+  wire[31:0] SRAM_DQ;
+  wire[31:0] Mem_read_value_MEMO;
+  wire[31:0] cache_rdata;
+  wire[31:0] sram_address, sram_wdata;
+  wire[63:0] sram_rdata;
+  wire[23:0] Signed_imm_24;
+  wire[23:0] Signed_imm_24_IDO;
+  wire[18:0] SRAM_ADDR;
+  wire[11:0] Shift_operand;
+  wire[11:0] Shift_operand_IDO;
+  wire[3:0] Dest_wb, SR, EXE_CMD, Dest, src1, src2, src1_o, src2_o;
+  wire[3:0] Dest_IDO, Dest_EXEO;
+  wire[3:0] EXE_CMD_IDO;
+  wire[3:0] SR_IDO;
+  wire[3:0] Sb;
+  wire writeBackEnable;
+  wire SRAM_WE_N;
+  wire WB_EN, MEM_R_EN, MEM_W_EN, B, S, imm, TWO_src;
+  wire WB_EN_IDO, MEM_R_EN_IDO, MEM_W_EN_IDO, B_IDO, S_IDO, imm_IDO;
+  wire WB_EN_EXEO, MEM_R_EN_EXEO, MEM_W_EN_EXEO;
+  wire MEM_R_EN_MEMO;
+  wire write, read;
+  wire final_hazard, new_hazard;
+  wire[1:0] sel_src1, sel_src2;  
+  wire[1:0] sel_src1_final, sel_src2_final;
+  wire ready, sram_ready;
+  
+  IF_Stage IF(clk , rst , (freeze | ~ready) , Branch_taken , BranchAdder , PC , Instruction);
+  
+  IF_Stage_Reg IF_R(clk , rst , (freeze | ~ready) , flush, PC , Instruction , PC_to_ID , Instruction_to_ID);
+  
+  ID_Stage ID(clk , rst , Instruction_to_ID , Result_WB, writeBackEnable, Dest_wb, final_hazard,
+            SR, WB_EN, MEM_R_EN, MEM_W_EN, B, S, EXE_CMD, VAL_Rn, VAL_Rm, imm, Shift_operand,
+            Signed_imm_24, Dest, src1, src2, TWO_src);
+            
+  ID_Stage_Reg ID_R(clk, rst, ~ready, flush, WB_EN, MEM_R_EN, MEM_W_EN, B, S, EXE_CMD, SR, PC_to_ID, VAL_Rn,
+            VAL_Rm, imm, Shift_operand, Signed_imm_24, Dest, src1, src2, WB_EN_IDO, MEM_R_EN_IDO, MEM_W_EN_IDO,
+            B_IDO, S_IDO, EXE_CMD_IDO, PC_to_EXE, VAL_Rn_IDO, VAL_Rm_IDO, imm_IDO, Shift_operand_IDO,
+            Signed_imm_24_IDO, SR_IDO, Dest_IDO, src1_o, src2_o);
+            
+  hazard_Detection_Unit HAZARD(TWO_src, src1, src2, Dest_IDO, WB_EN_IDO, Dest_EXEO, WB_EN_EXEO, hazard);
+  
+  newHazardUnit NEW_HAZARD(TWO_src, src1, src2, Dest_IDO, MEM_R_EN_IDO, new_hazard);
+  
+  ForwardingUnit FU(src1_o, src2_o, WB_EN_EXEO, writeBackEnable, Dest_EXEO, Dest_wb, sel_src1, sel_src2);
+  
+  EXE_Stage EXE(clk, EXE_CMD_IDO, MEM_R_EN_IDO, MEM_W_EN_IDO, PC_to_EXE, VAL_Rn_IDO, VAL_Rm_IDO, imm_IDO,
+            Shift_operand_IDO, Signed_imm_24_IDO, SR_IDO, sel_src1_final, sel_src2_final, ALU_res_EXEO, Result_WB, ALU_res, BranchAdder, val_rm_o,  Sb);
+            
+  StatusRegister StR(Sb, rst,  S_IDO, clk, SR);
+  
+  EXE_Stage_Reg EXE_R(clk, rst, ~ready, WB_EN_IDO, MEM_R_EN_IDO, MEM_W_EN_IDO, ALU_res, val_rm_o, Dest_IDO,
+            WB_EN_EXEO, MEM_R_EN_EXEO, MEM_W_EN_EXEO, ALU_res_EXEO, VAL_Rm_EXEO, Dest_EXEO);
+  
+  Cache_Controller CACHE(clk, rst, ALU_res_EXEO, VAL_Rm_EXEO, MEM_R_EN_EXEO, MEM_W_EN_EXEO, cache_rdata,
+            ready, sram_address , sram_wdata, write, read, sram_rdata, sram_ready);
+  
+  Memory SRAM(clk, rst, SRAM_WE_N, SRAM_ADDR, SRAM_DQ);
+
+  SRAM_Controller SRAMCONTROLLER(clk, rst, write, read, sram_address, sram_wdata, sram_rdata, sram_ready, SRAM_DQ, SRAM_ADDR, SRAM_WE_N);
+  
+  MEM_Stage_Reg Mem_reg(clk, rst, ~ready, WB_EN_EXEO, MEM_R_EN_EXEO, ALU_res_EXEO, cache_rdata, Dest_EXEO,
+            writeBackEnable, MEM_R_EN_MEMO, ALU_res_MEMO, Mem_read_value_MEMO, Dest_wb);
+  
+  WB_Stage WB(ALU_res_MEMO, Mem_read_value_MEMO, MEM_R_EN_MEMO, Result_WB);
+  
+  assign flush = B_IDO;
+  
+  assign Branch_taken = B_IDO;
+  
+  assign freeze = final_hazard;
+  
+  assign final_hazard = (new_hazard & switch) | (hazard & ~switch);
+  
+  assign sel_src1_final = sel_src1 & {switch, switch};
+  
+  assign sel_src2_final = sel_src2 & {switch, switch};
+  
+endmodule  
